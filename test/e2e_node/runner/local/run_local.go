@@ -92,8 +92,11 @@ func main() {
 			klog.Fatalf("Failed to get k8s root directory: %v", err)
 		}
 		systemSpecFile := filepath.Join(rootDir, system.SystemSpecPath, *systemSpecName+".yaml")
-		args = append(args, fmt.Sprintf("--system-spec-name=%s --system-spec-file=%s --extra-envs=%s", *systemSpecName, systemSpecFile, *extraEnvs))
+		args = append(args, fmt.Sprintf("--system-spec-name=%s --system-spec-file=%s", *systemSpecName, systemSpecFile))
 	}
+	if *extraEnvs != "" {
+        args = append(args, fmt.Sprintf(" --extra-envs=%s", *extraEnvs))
+    }
 	if *kubeletConfigFile != "" {
 		args = append(args, fmt.Sprintf("--kubelet-config-file=\"%s\"", *kubeletConfigFile))
 	}
