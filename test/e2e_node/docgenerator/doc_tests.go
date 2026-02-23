@@ -18,6 +18,15 @@ const (
 	CONTAINER_LIFECYCLE_TEST TestCaseType = "CONTAINER_LIFECYCLE_TEST"
 )
 
+var tests = make(map[TestCaseType][]Test)
+
+type Test struct {
+	PodSpecDescription string
+	TestCaseTitle string
+	PodSpec v1.Pod
+	
+}
+
 var Lock sync.Mutex
 var TestOutputs map[TestCaseType][]interface{}
 
