@@ -277,6 +277,14 @@ else
   test_args='--kubelet-flags="--cluster-domain='${KUBE_DNS_DOMAIN:-cluster.local}'" '${test_args}
   # Test using the host the script was run on
   # Provided for backwards compatibility
+  export JSON_LOG="${artifacts}/json-log.txt"
+# Ensure the runner forwards JSON_LOG into the test process environment
+  if [[ -z "${extra_envs}" ]]; then
+    extra_envs="JSON_LOG=${JSON_LOG}"
+  else
+    extra_envs="${extra_envs},JSON_LOG=${JSON_LOG}"
+  fi
+  touch "${artifacts}/json-log.txt"
   go run test/e2e_node/runner/local/run_local.go \
     --debug-tool="${debug_tool}" \
     --system-spec-name="${system_spec_name}" --extra-envs="${extra_envs}" \

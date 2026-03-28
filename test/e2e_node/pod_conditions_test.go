@@ -36,6 +36,7 @@ import (
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	testutils "k8s.io/kubernetes/test/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
+	docgen "k8s.io/kubernetes/test/e2e_node/docgenerator"
 
 	"k8s.io/kubernetes/pkg/features"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
@@ -74,6 +75,14 @@ var _ = SIGDescribe("Pod conditions managed by Kubelet", func() {
 func runPodFailingConditionsTest(f *framework.Framework, hasInitContainers, checkPodReadyToStart bool) func(ctx context.Context) {
 	return func(ctx context.Context) {
 		ginkgo.By("creating a pod whose sandbox creation is blocked due to a missing volume")
+		
+		var testOutput docgen.PodConditionsTestOutput
+		testOutput.Title = "POD CREATION FAILURE SCENARIO"
+		testOutput.TestDescription = "creating a pod whose sandbox creation is blocked due to a missing volume"
+		/*pd := PodDocGenerator{
+			TestDescription: "creating a pod whose sandbox creation is blocked due to a missing volume",
+			ExpectedResult: "Pod creation blocked",
+		}*/
 
 		p := webserverPodSpec("pod-"+string(uuid.NewUUID()), "web1", "init1", hasInitContainers)
 		p.Spec.Volumes = []v1.Volume{
@@ -93,7 +102,10 @@ func runPodFailingConditionsTest(f *framework.Framework, hasInitContainers, chec
 			},
 		}
 
+
+		testOutput.PodSpec = *p
 		p = e2epod.NewPodClient(f).Create(ctx, p)
+
 
 		ginkgo.By("waiting until kubelet has started trying to set up the pod and started to fail")
 
@@ -108,39 +120,58 @@ func runPodFailingConditionsTest(f *framework.Framework, hasInitContainers, chec
 		p, err := e2epod.NewPodClient(f).Get(ctx, p.Name, metav1.GetOptions{})
 		framework.ExpectNoError(err)
 
+		//pd.PodSpec = *p
+		//pd.Generate()
 		ginkgo.By("checking pod condition for a pod whose sandbox creation is blocked")
 
 		scheduledTime, err := getTransitionTimeForPodConditionWithStatus(p, v1.PodScheduled, true)
 		framework.ExpectNoError(err)
+		if hasInitContainers {
+			testOutput.SuccessfulStates = append(testOutput.SuccessfulStates, docgen.State{State: v1.PodScheduled, TimeTaken: scheduledTime})
+		}
 
 		// Verify PodReadyToStartContainers is not set (since sandboxcreation is blocked)
 		if checkPodReadyToStart {
-			_, err := getTransitionTimeForPodConditionWithStatus(p, v1.PodReadyToStartContainers, false)
+			podReadyToStartTime, err := getTransitionTimeForPodConditionWithStatus(p, v1.PodReadyToStartContainers, false)
+			testOutput.FailedStates = append(testOutput.FailedStates, docgen.State{State: v1.PodReadyToStartContainers, TimeTaken: podReadyToStartTime})
 			framework.ExpectNoError(err)
 		}
 
 		if hasInitContainers {
 			// Verify PodInitialized is not set if init containers are present (since sandboxcreation is blocked)
-			_, err := getTransitionTimeForPodConditionWithStatus(p, v1.PodInitialized, false)
+			podInitialisationTime, err := getTransitionTimeForPodConditionWithStatus(p, v1.PodInitialized, false)
+			testOutput.FailedStates = append(testOutput.FailedStates, docgen.State{State: v1.PodInitialized, TimeTaken: podInitialisationTime})
 			framework.ExpectNoError(err)
 		} else {
 			// Verify PodInitialized is set if init containers are not present (since without init containers, it gets set very early)
 			initializedTime, err := getTransitionTimeForPodConditionWithStatus(p, v1.PodInitialized, true)
+			testOutput.SuccessfulStates = append(testOutput.SuccessfulStates, docgen.State{State: v1.PodInitialized, TimeTaken: initializedTime})
+			testOutput.SuccessfulStates = append(testOutput.SuccessfulStates, docgen.State{State: v1.PodScheduled, TimeTaken:scheduledTime})
 			framework.ExpectNoError(err)
 			gomega.Expect(initializedTime.Before(scheduledTime)).NotTo(gomega.BeTrueBecause("pod without init containers is initialized at: %v which is before pod scheduled at: %v", initializedTime, scheduledTime))
 		}
 
+		//ginkgo.By("JSON log", func() {fmt.Println(testOutput)})
 		// Verify ContainersReady is not set (since sandboxcreation is blocked)
 		_, err = getTransitionTimeForPodConditionWithStatus(p, v1.ContainersReady, false)
 		framework.ExpectNoError(err)
+		testOutput.FailedStates = append(testOutput.FailedStates, docgen.State{State: v1.ContainersReady})
+		eventList, err := f.ClientSet.CoreV1().Events(f.Namespace.Name).List(ctx, metav1.ListOptions{FieldSelector: eventSelector})
+		framework.ExpectNoError(err)
+		testOutput.FailureReason = eventList.Items[len(eventList.Items) - 1].Message
 		// Verify PodReady is not set (since sandboxcreation is blocked)
 		_, err = getTransitionTimeForPodConditionWithStatus(p, v1.PodReady, false)
 		framework.ExpectNoError(err)
+		testOutput.FailedStates = append(testOutput.FailedStates, docgen.State{State: v1.PodReady})
+		
+		docgen.AddTestOutput(docgen.POD_CONDITION_TEST, testOutput)
+		fmt.Println(docgen.TestOutputs)
+		
 
 		// this testcase is creating the missing volume that unblock the pod above,
 		// and check PodReadyToStartContainer is setting correctly.
 		ginkgo.By("checking pod condition for a pod when volumes source is created")
-
+		
 		configmap := v1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "cm-that-unblock-pod-condition",
@@ -203,6 +234,12 @@ func runPodReadyConditionsTest(f *framework.Framework, hasInitContainers, checkP
 	return func(ctx context.Context) {
 		ginkgo.By("creating a pod that successfully comes up in a ready/running state")
 
+		var testOutput docgen.PodConditionsTestOutput
+		testOutput.Title = "POD SUCCESSFUL CREATION"
+		testOutput.TestDescription = "creating a pod that successfully comes up in a ready/running state"
+
+		testOutput.PodSpec = *webserverPodSpec("pod-"+string(uuid.NewUUID()), "web1", "init1", hasInitContainers)
+
 		p := e2epod.NewPodClient(f).Create(ctx, webserverPodSpec("pod-"+string(uuid.NewUUID()), "web1", "init1", hasInitContainers))
 		framework.ExpectNoError(e2epod.WaitTimeoutForPodReadyInNamespace(ctx, f.ClientSet, p.Name, f.Namespace.Name, framework.PodStartTimeout))
 
@@ -217,40 +254,51 @@ func runPodReadyConditionsTest(f *framework.Framework, hasInitContainers, checkP
 		ginkgo.By("checking order of pod condition transitions for a pod with no container/sandbox restarts")
 
 		scheduledTime, err := getTransitionTimeForPodConditionWithStatus(p, v1.PodScheduled, true)
+		testOutput.SuccessfulStates = append(testOutput.SuccessfulStates, docgen.State{State: v1.PodScheduled})
 		framework.ExpectNoError(err)
 		initializedTime, err := getTransitionTimeForPodConditionWithStatus(p, v1.PodInitialized, true)
+		
 		framework.ExpectNoError(err)
 
 		condBeforeContainersReadyTransitionTime := initializedTime
 		errSubstrIfContainersReadyTooEarly := "is initialized"
 		if checkPodReadyToStart {
 			readyToStartContainersTime, err := getTransitionTimeForPodConditionWithStatus(p, v1.PodReadyToStartContainers, true)
+			
 			framework.ExpectNoError(err)
 
 			if hasInitContainers {
 				// With init containers, verify the sequence of conditions is: Scheduled => PodReadyToStartContainers => Initialized
 				gomega.Expect(readyToStartContainersTime.Before(scheduledTime)).ToNot(gomega.BeTrueBecause("pod with init containers is initialized at: %v which is before pod has ready to start at: %v", initializedTime, readyToStartContainersTime))
 				gomega.Expect(initializedTime.Before(readyToStartContainersTime)).ToNot(gomega.BeTrueBecause("pod with init containers is initialized at: %v which is before pod has ready to start at: %v", initializedTime, readyToStartContainersTime))
+				testOutput.SuccessfulStates = append(testOutput.SuccessfulStates, docgen.State{State: v1.PodReadyToStartContainers})
+				testOutput.SuccessfulStates = append(testOutput.SuccessfulStates, docgen.State{State: v1.PodInitialized})
 			} else {
 				// Without init containers, verify the sequence of conditions is: Scheduled => Initialized => PodReadyToStartContainers
 				condBeforeContainersReadyTransitionTime = readyToStartContainersTime
 				errSubstrIfContainersReadyTooEarly = "ready to start"
 				gomega.Expect(initializedTime.Before(scheduledTime)).NotTo(gomega.BeTrueBecause("pod without init containers initialized at: %v which is before pod scheduled at: %v", initializedTime, scheduledTime))
 				gomega.Expect(readyToStartContainersTime.Before(initializedTime)).NotTo(gomega.BeTrueBecause("pod without init containers has ready to start at: %v which is before pod is initialized at: %v", readyToStartContainersTime, initializedTime))
+				testOutput.SuccessfulStates = append(testOutput.SuccessfulStates, docgen.State{State: v1.PodInitialized})
+				testOutput.SuccessfulStates = append(testOutput.SuccessfulStates, docgen.State{State: v1.PodReadyToStartContainers})
 			}
 		} else {
 			// In the absence of PodHasReadyToStartContainers feature disabled, verify the sequence is: Scheduled => Initialized
 			gomega.Expect(initializedTime.Before(scheduledTime)).NotTo(gomega.BeTrueBecause("pod initialized at: %v which is before pod scheduled at: %v", initializedTime, scheduledTime))
+			testOutput.SuccessfulStates = append(testOutput.SuccessfulStates, docgen.State{State: v1.PodInitialized})
 		}
 		// Verify the next condition to get set is ContainersReady
 		containersReadyTime, err := getTransitionTimeForPodConditionWithStatus(p, v1.ContainersReady, true)
 		framework.ExpectNoError(err)
 		gomega.Expect(containersReadyTime.Before(condBeforeContainersReadyTransitionTime)).NotTo(gomega.BeTrueBecause("containers ready at: %v which is before pod %s: %v", containersReadyTime, errSubstrIfContainersReadyTooEarly, initializedTime))
+		testOutput.SuccessfulStates = append(testOutput.SuccessfulStates, docgen.State{State: v1.ContainersReady})
 
 		// Verify ContainersReady => PodReady
 		podReadyTime, err := getTransitionTimeForPodConditionWithStatus(p, v1.PodReady, true)
 		framework.ExpectNoError(err)
 		gomega.Expect(podReadyTime.Before(containersReadyTime)).NotTo(gomega.BeTrueBecause("pod ready at: %v which is before pod containers ready at: %v", podReadyTime, containersReadyTime))
+		testOutput.SuccessfulStates = append(testOutput.SuccessfulStates, docgen.State{State: v1.PodReady})
+		docgen.AddTestOutput(docgen.POD_CONDITION_TEST, testOutput)
 	}
 }
 

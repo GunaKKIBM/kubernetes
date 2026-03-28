@@ -61,7 +61,7 @@ import (
 	_ "k8s.io/kubernetes/test/e2e/framework/node/init"
 	_ "k8s.io/kubernetes/test/utils/format"
 	"k8s.io/kubernetes/test/utils/ktesting"
-
+	docgen "k8s.io/kubernetes/test/e2e_node/docgenerator"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/spf13/pflag"
@@ -300,7 +300,28 @@ var _ = ginkgo.SynchronizedBeforeSuite(func(ctx context.Context) []byte {
 })
 
 // Tear down the kubelet on the node
-var _ = ginkgo.SynchronizedAfterSuite(func() {}, func() {
+var _ = ginkgo.SynchronizedAfterSuite(func() {
+	docgen.Lock.Lock()
+        defer docgen.Lock.Unlock()
+		if (len(docgen.TestOutputs) == 0) {
+			return
+		}
+
+		jsonLog := os.Getenv("JSON_LOG")
+		out, err := os.OpenFile(jsonLog, os.O_RDWR, 0644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to open JSON_LOG %q: %v\n", jsonLog, err)
+			return
+		}
+		defer out.Close()
+
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(docgen.TestOutputs); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to write merged JSON_LOG: %v\n", err)
+			return
+		}
+}, func() {
 	if e2es != nil {
 		if *startServices && *stopServices {
 			klog.Infof("Stopping node services...")
